@@ -19,30 +19,30 @@ DOWNLOAD_HANDLERS = {
 
 TWISTED_REACTOR = "twisted.internet.asyncioreactor.AsyncioSelectorReactor"
 PLAYWRIGHT_LAUNCH_OPTIONS = {
-    "headless": True
+    "headless": False
 }
 # PLAYWRIGHT_BROWSER_TYPE = "firefox"
 # PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT = 50000
 # Crawl responsibly by identifying yourself (and your website) on the user-agent
-#USER_AGENT = 'hertz-sitemap-builder'
+USER_AGENT = 'None'
 # Obey robots.txt rules
 ROBOTSTXT_OBEY = True
 
 SCHEDULER_PRIORITY_QUEUE = 'scrapy.pqueues.DownloaderAwarePriorityQueue'
 # Configure maximum concurrent requests performed by Scrapy (default: 16)
-# CONCURRENT_REQUESTS = 100
+#CONCURRENT_REQUESTS = 0
 # LOG_ENABLED = True
 REACTOR_THREADPOOL_MAXSIZE = 20
 # LOG_LEVEL = 'DEBUG'
-COOKIES_ENABLED = False
+COOKIES_ENABLED = True
 
 # Configure a delay for requests for the same website (default: 0)
 # See https://docs.scrapy.org/en/latest/topics/settings.html#download-delay
 # See also autothrottle settings and docs
-# DOWNLOAD_DELAY = 3
+DOWNLOAD_DELAY = 3
 DOWNLOAD_TIMEOUT = 30
 # The download delay setting will honor only one of:
-# CONCURRENT_REQUESTS_PER_DOMAIN = 16
+CONCURRENT_REQUESTS_PER_DOMAIN = 32
 # CONCURRENT_REQUESTS_PER_IP = 16
 
 # Disable cookies (enabled by default)
@@ -52,10 +52,19 @@ DOWNLOAD_TIMEOUT = 30
 # TELNETCONSOLE_ENABLED = False
 
 # Override the default request headers:
-# DEFAULT_REQUEST_HEADERS = {
-#   'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-#   'Accept-Language': 'en',
-# }
+DEFAULT_REQUEST_HEADERS = {
+    # we should use headers
+    'User-Agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36",
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+    'Accept-Language': 'en',
+}
+
+# Enable and configure the AutoThrottle extension (disabled by default)
+# See https://doc.scrapy.org/en/latest/topics/autothrottle.html
+AUTOTHROTTLE_ENABLED = True
+
+# The initial download delay
+AUTOTHROTTLE_START_DELAY = 5
 
 # Enable or disable spider middlewares
 # See https://docs.scrapy.org/en/latest/topics/spider-middleware.html
@@ -67,7 +76,7 @@ DOWNLOAD_TIMEOUT = 30
 # See https://docs.scrapy.org/en/latest/topics/downloader-middleware.html
 SCRAPEOPS_API_KEY = 'c57a8fea-515c-4a70-9fc1-82ed315d2e4d'
 SCRAPEOPS_FAKE_USER_AGENT_ENDPOINT = True
-
+#
 DOWNLOADER_MIDDLEWARES = {
     'hertzspider.middlewares.HertzDownloaderMiddleware': 400,
 }
@@ -104,5 +113,6 @@ DOWNLOADER_MIDDLEWARES = {
 # HTTPCACHE_DIR = 'httpcache'
 # HTTPCACHE_IGNORE_HTTP_CODES = []
 # HTTPCACHE_STORAGE = 'scrapy.extensions.httpcache.FilesystemCacheStorage'
-
+REQUEST_FINGERPRINTER_IMPLEMENTATION = "2.7"
 PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT = 200000
+FEED_EXPORT_ENCODING = "utf-8"

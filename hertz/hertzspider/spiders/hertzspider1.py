@@ -1,3 +1,4 @@
+import json
 import time
 
 import scrapy
@@ -14,16 +15,17 @@ from twisted.internet.error import DNSLookupError, TCPTimedOutError
 from playwright.sync_api import Playwright, sync_playwright
 from playwright._impl._api_types import TimeoutError
 from twisted.python.failure import Failure
+from scrapy.shell import inspect_response
 
 try:
-    os.remove('../hertz/hertzspider/new_new_outputs/output.xml')
-    os.remove('../hertz/hertzspider/new_new_outputs/log.log')
+    os.remove('../outputs/output17.xml')
+    os.remove('../outputs/log17.log')
 except OSError:
     pass
 
-logging.basicConfig(filename='../hertz/hertzspider/new_new_outputs/log.log', level=logging.DEBUG)
-logging.getLogger('scrapy').setLevel(logging.WARNING)
-logging.getLogger('playwright').setLevel(logging.WARNING)
+logging.basicConfig(filename='../outputs/log17.log', level=logging.INFO)
+logging.getLogger('scrapy').setLevel(logging.ERROR)
+logging.getLogger('playwright').setLevel(logging.ERROR)
 
 
 # def set_playwright_true(request, response):
@@ -32,80 +34,172 @@ logging.getLogger('playwright').setLevel(logging.WARNING)
 #     request.meta["playwright_page_methods"] = [PageMethod('wait_for_selector', 'div#container')]
 #     return request
 
+def should_abort_requests(request):
+    """ do not download these resources """
+    if request.resource_type == 'image':
+        return True
+    elif request.resource_type == 'stylesheet':
+        return True
+    elif request.resource_type == 'media':
+        return True
+    elif request.resource_type == 'font':
+        return True
+    # elif request.resource_type == 'xhr':
+    #     return True
+
+    return False
+
 
 class HertzspiderSpider(scrapy.Spider):
     name = 'hertzspider'
-    # allowed_domains = ['hertz.com']
+    handle_httpstatus_list = [500]
 
     custom_settings = {
-        'FEEDS': {'../hertz/hertzspider/new_new_outputs/output.xml': {"format": 'xml'}},
-        "LOG_LEVEL": "INFO",
+        'FEEDS': {'../outputs/output17.xml': {"format": 'xml'}},
+        "LOG_LEVEL": "ERROR",
+        'PLAYWRIGHT_ABORT_REQUEST': should_abort_requests
     }
 
-    # headers = {
-    #            'user-agent' : "hertz-sitemap-builder"
-    # }
+    headers = {
+    #             'x-irac-bot-access': "true"
+        'User-Agent': "hertz-sitemap-builder",
+        'x-irac-bot-access': 'true'
+    }
 
-    # when the class is 1st instantiated
     def __init__(self, name=None, **kwargs):
+        """when the class is 1st instantiated"""
         super().__init__(name, **kwargs)
 
-        self.link_extractor = LinkExtractor(canonicalize=True, unique=True,
+        self.link_extractor = LinkExtractor(canonicalize=False, unique=True,
                                             allow_domains=[self.domain],
-                                            deny=['/p/', '/A-thou-doe-prospeeceiud-accome-Hauen-heeleepell'],
-                                            deny_domains=['salesforceliveagent.com', 'google-analytics.com',
+                                            deny=['/p/', '/location','/drivingforward','/rest/',
+                                                  '/A-thou-doe-prospeeceiud-accome-Hauen-heeleepell'],
+                                            deny_domains=['pub.emails.hertz.com', 'salesforceliveagent.com', 'google-analytics.com',
                                                           'analytics.google.com',
-                                                          'c.clicktale.net']
+                                                          'c.clicktale.net'],
                                             )
-        self.links = []
-        self.error_urls = []
-        self.failure = {}
+        self.links = []  # list that holds URLs that come back with a 200, so that they dont get crawled in a loop
+        self.error_urls = []  # temporary list to hold URLs that cannot be scraped with playwright
+        self.error_400_urls = []  # temporary list to hold URLs that cannot be scraped with playwright
+        self.error_DNS_urls = []  # temporary list to hold URLs that cannot be scraped with playwright
+        self.following_links = []  # URLs that are already being followed, do not follow URLs that are already in the queue/this list
+        self.error_500_urls = []
         logger = logging.getLogger(__file__)
 
         # self.robot_parser = robotparser.RobotFileParser()
         # self.robot_parser.set_url(f'https://{self.domain}/robots.txt')
         # self.robot_parser.read()
 
-
-
     def start_requests(self):
+        """ start program here """
+        self.logger.info("Starting program for %s", f'https://{self.domain}')
+
+        # yield an initial one time request to the domain homepage
         yield scrapy.Request(f'https://{self.domain}/rentacar/reservation',
-                             # headers={"User-Agent": "hertz-sitemap-builder"},
+                             dont_filter=True,
+                             headers={'x-irac-bot-access': 'true',
+                                      'User-Agent': "hertz-sitemap-builder", },
                              meta=dict(
                                  playwright=True,
                                  playwright_include_page=True,
                                  playwright_page_methods=[
                                      PageMethod('wait_for_selector', 'div#container'),
-                                     PageMethod("wait_for_timeout", float(10000))
+                                     PageMethod("wait_for_timeout", float(100000))
                                  ],
                                  errback=self.errback,
                              )
                              )
 
     async def parse(self, response):
-        """ build the initial list off the input domain """
+        """ parse the response and build the list of links inside the page
+            -recursive """
+
         page = response.meta["playwright_page"]
         await page.close()
 
-        links_object = self.link_extractor.extract_links(response)
-        # links_object = response.css("a::attr('href')")
-        self.logger.info("{0} {1} {2} ".format('Links', 'in', 'domain') + response.url + "{}".format(':'))
-        self.logger.info(links_object)
-        self.logger.info("=" * 30)
-        for link in links_object:
-            try:
+        if response.status == 500:
+            self.logger.error('500 on %s', response.url)
+            self.logger.error(f'Adding {response.url} to error_500_urls')
+            self.error_500_urls.append({response.url, response.status})
+        else:
 
-                link_to_follow = link.url
-                # link_to_follow = link.get()
-                # yield {
-                #    "loc" : link.url
-                # }
+            if response.url not in self.links:  # check to see if the url is in self.links so that we dont re-crawl the page
+                self.links.append(response.url)  # add the url to self.links so that we dont re-crawl the page
+                self.logger.info("(Parse)Adding %s to self.links", response.url)
 
+                canonicalURLText = response.xpath('//link[@rel="canonical"]/@href').extract()
+                canonicalURL = json.dumps(canonicalURLText[0]).replace(" ", "")
+                responseURL = json.dumps(response.url).replace(" ", "")
+                self.logger.info("(Parse)canonicalURLText is %s,responseURL is %s", canonicalURL, responseURL)
+
+                if canonicalURL.lower().strip() == responseURL.lower().strip():
+                    yield {
+                        'loc': response.url  # yield a successful page
+                    }
+
+            links_object = self.link_extractor.extract_links(response)  # extract links from current page
+
+            # start log links from current page
+            self.logger.info("{0} {1} {2} ".format('(Parse)Links', 'in', 'page') + response.url + "{}".format(':'))
+            for obj in links_object:
+                self.logger.info(str(obj.url))
+            self.logger.info("=" * 30)
+            # end log links from current page
+
+            for link in links_object:
+                try:
+
+                    link_to_follow = link.url
+
+                    if link_to_follow not in self.links and link_to_follow not in self.following_links:  # the URL should not already have been crawled or being followed through other crawls in process
+
+                        self.logger.info("(Parse)started following %s", link_to_follow)
+                        self.following_links.append(link_to_follow)  # this URL is in process of being crawled
+
+                        # yield request to link_to_follow
+                        yield scrapy.Request(link_to_follow,
+                                             dont_filter=True,
+                                             headers={'x-irac-bot-access': 'true',
+                                                      'User-Agent': "hertz-sitemap-builder",},
+                                             callback=self.parseUrl,
+                                             errback=self.parseError,
+                                             cb_kwargs=dict(request_link=link_to_follow),
+                                             meta=dict(
+                                                 playwright=True,
+                                                 playwright_include_page=True,
+                                                 playwright_page_methods=[
+                                                     PageMethod('wait_for_selector', 'div#container'),
+                                                     PageMethod("wait_for_timeout", 100000)
+                                                 ]
+                                             )
+                                             )
+                except Exception as E:
+                    self.logger.error(traceback.format_exc())
+                    self.logger.error(repr(E))
+                    # no link.url exception?
+                    # need better error handling
+
+    async def parseUrl(self, response, request_link):
+        """ parse the response from parse method then recursively call parse method to further extract links"""
+
+        self.logger.info("(parseUrl)closing %s", response.url)
+        page = response.meta["playwright_page"]
+        await page.close()
+
+        try:
+            self.logger.info("Inside parseUrl")
+            self.logger.info("*" * 50)
+            self.logger.info(
+                "following {0}, visited {1},status={2} ".format(request_link, response.url, response.status))
+            self.logger.info("*" * 50)
+            if response.status == 200:
+                link_to_follow = response.url
                 yield scrapy.Request(link_to_follow,
-                                     #headers={"User-Agent": "hertz-sitemap-builder"},
-                                     callback=self.parseUrl,
+                                     dont_filter=True,
+                                     headers={'x-irac-bot-access': 'true',
+                                              'User-Agent': "hertz-sitemap-builder", },
+                                     callback=self.parse,
                                      errback=self.parseError,
-                                     cb_kwargs=dict(request_link=link_to_follow, retry=False),
                                      meta=dict(
                                          playwright=True,
                                          playwright_include_page=True,
@@ -115,49 +209,12 @@ class HertzspiderSpider(scrapy.Spider):
                                          ]
                                      )
                                      )
-            except Exception as E:
-                self.logger.error(traceback.format_exc())
-                self.logger.error(repr(E))
-                yield {
-                    'error': "error fetching " + link.get(),
-                    'status': response.status
-                }
-
-    async def parseUrl(self, response, request_link, retry):
-        if not retry:
-            page = response.meta["playwright_page"]
-            await page.close()
-        else:
-            pass
-
-        try:
-            self.logger.info(retry)
-            self.logger.info("*" * 50)
-            self.logger.info("visited  %s", response.url)
-            self.logger.info("request_link is %s", request_link)
-            self.logger.info("status for rl-{0} ru-{1} {2} ".format(request_link, response.url, response.status))
-            self.logger.info("*" * 50)
-            if response.status == 200:
-                if response.url not in self.links:
-                    self.links.append(response.url)
-                    yield {
-                        'loc': response.url
-                    }
-
-                try:
-                    self.logger.info("closing " + response.url)
-                    await page.close()
-                except Exception as e:
-                    self.logger.error(f"Failed to close browser context: {str(e)}")
-                finally:
-                    await page.close()
 
         except Exception as E:
             self.logger.error('exception')
             self.logger.error(repr(E))
-            yield {
-                'loc': "error"
-            }
+            # no response.url exception?
+            # need better error handling
 
         # url_item=HertzItem()
         # try:
@@ -175,120 +232,146 @@ class HertzspiderSpider(scrapy.Spider):
         #         'loc':"error"
         #     }
 
-    async def retryLogicc(self):
-        self.logger.error('retrying')
-        links_object = self.error_urls
-        # links_object = response.css("a::attr('href')")
-        self.logger.info("{0} {1} {2} ".format('Links', 'in', 'error_urls') + "{}".format(':'))
-        self.logger.info(links_object)
-        self.logger.info("~" * 30)
-        for link in links_object:
-            try:
+    async def parseErrorUrl(self, response, request_link):
+        """ parse the response from parseError method """
 
-                link_to_follow = link.url
-                # link_to_follow = link.get()
-                # yield {
-                #    "loc" : link.url
-                # }
+        try:
+            self.logger.info("retrying inside parseErrorUrl")
+            self.logger.info("*" * 50)
+            self.logger.info("(parseErrorUr) following {0}, visited {1},status={2} ".format(request_link, response.url,
+                                                                                            response.status))
+            self.logger.info("*" * 50)
+            if response.status == 200:
+                if response.url not in self.links:
+                    self.links.append(response.url)
+                    yield {
+                        'loc': response.url
+                    }
 
-                yield scrapy.Request(link_to_follow,
-                                     # headers={"User-Agent": "hertz-sitemap-builder"},
-                                     callback=self.parseUrl,
-                                     errback=self.parseError,
-                                     cb_kwargs=dict(request_link=link_to_follow, retry=True),
-                                     meta=dict(
-                                         playwright=True,
-                                         playwright_context="error_pages",
-                                         playwright_include_page=False,
-                                         # playwright_page_methods=[
-                                         #     PageMethod('wait_for_selector', 'div#container'),
-                                         #     PageMethod("wait_for_timeout", 10000)
-                                         # ]
-                                     )
-                                     )
-            except Exception as E:
-                print(traceback.format_exc())
-                self.logger.error(repr(Exception))
-                # yield {
-                #     'error': "error fetching " + link.get(),
-                #     'status': response.status
-                # }
+                # try:
+                #     self.logger.info("closing " + response.url)
+                #     await page.close()
+                # except Exception as e:
+                #     self.logger.error(f"Failed to close browser context: {str(e)}")
+                # finally:
+                #     await page.close()
+
+        except Exception as E:
+            self.logger.error('exception')
+            self.logger.error(repr(E))
+
+    async def retryPlaywrightRequest(self, failure):
+        self.logger.error('retrying {0} since it needs playwright'.format(failure.request.url))
+        yield scrapy.Request(failure.request.url,
+                             dont_filter=True,
+                             headers={'x-irac-bot-access': 'true',
+                                      'User-Agent': "hertz-sitemap-builder", },
+                             callback=self.parse,
+                             errback=self.parseError,
+                             meta=dict(
+                                 playwright=True,
+                                 playwright_include_page=True,
+                                 playwright_page_methods=[
+                                     PageMethod('wait_for_selector', 'div#container'),
+                                     PageMethod("wait_for_timeout", 10000)
+                                 ]
+                             )
+                             )
+
     async def parseError(self, failure):
-        page = failure.request.meta["playwright_page"]
+        """ parse the errors from itself,parseUrl and parse methods """
+        self.logger.info("(parseError)closing " + failure.request.url)
 
-        self.failure = failure
-        self.logger.error("Inside parseError")
+        page = failure.request.meta["playwright_page"]
+        await page.close()
+
+        self.logger.info("~" * 30)
+        self.logger.info("Inside parseError")
         self.logger.error(repr(failure))
-        self.logger.info("failure in  %s", failure.request.cb_kwargs['request_link'])
+        self.logger.info("failure in %s", failure.request.url)
         self.logger.error(traceback.format_exc())
-        # yield {
-        #     'failure_url': failure.request.cb_kwargs['request_link'],
-        #     'status': failure.status
-        # }
+        self.logger.info("~" * 30)
 
         if failure.check(HttpError):
             # these exceptions come from HttpError spider middleware
             # you can get the non-200 response
             response = failure.value.response
             self.logger.error('HttpErrorr on %s', response.url)
-            self.error_urls.append(response.url)
-            # self.retryLogic(self.failure)
-            self.retryLogicc()
+            self.logger.error(f'Adding {response.url} to error_400_urls')
+            self.error_400_urls.append({response.url, response.status})
 
         elif failure.check(DNSLookupError):
             # this is the original request
             request = failure.request
             self.logger.error('DNSLookupErrorr on %s', request.url)
-            self.error_urls.append(request.url)
-            # self.retryLogic(self.failure)
-            self.retryLogicc()
+            self.logger.error(f'Adding {request.url} to error_DNS_urls')
+            self.error_DNS_urls.append({request.url, failure.value.response.status})
 
         elif failure.check(TimeoutError, TCPTimedOutError):
             request = failure.request
             self.logger.error('TimeoutErrorr on %s', request.url)
-            self.error_urls.append(request.url)
-            self.retryLogicc()
+            self.logger.error(f'Adding {request.url} to error_urls')
+            if request.url not in self.error_urls:
+                self.error_urls.append({request.url})
 
+            link_to_follow = failure.request.url
 
+            self.logger.info('retrying on %s', link_to_follow)
 
-        # link_to_follow = failure.request.url
-        #
-        # self.logger.error('retrying on %s', link_to_follow)
-        #
-        # yield scrapy.Request(link_to_follow,
-        #                      # headers={"User-Agent": "hertz-sitemap-builder"},
-        #                      callback=self.parseUrl,
-        #                      errback=self.parseError,
-        #                      cb_kwargs=dict(request_link=link_to_follow, retry=True),
-        #                      meta=dict(
-        #                          playwright=True,
-        #                          playwright_include_page=False,
-        #                          # playwright_page_methods=[
-        #                          #     PageMethod('wait_for_selector', 'div#container'),
-        #                          #     PageMethod("wait_for_timeout", 10000)
-        #                          # ]
-        #                      )
-        #                      )
+            if link_to_follow not in self.error_urls:
+                yield scrapy.Request(link_to_follow,
+                                     dont_filter=True,
+                                     headers={'x-irac-bot-access': 'true',
+                                              'User-Agent': "hertz-sitemap-builder", },
+                                     callback=self.parseErrorUrl,
+                                     errback=self.retryPlaywrightRequest,
+                                     cb_kwargs=dict(request_link=link_to_follow),
+                                     meta=dict(
+                                             playwright=True,
+                                         )
+                                     )
+
 
     async def errback(self, failure):
-        self.logger.error("Inside errBack")
-        # self.retryLogicc()
+        self.logger.info("Inside errBack")
+        self.logger.error(repr(failure))
+        self.logger.info("failure in %s", failure.request.url)
+        self.logger.error(traceback.format_exc())
 
         page = failure.request.meta["playwright_page"]
         await page.close()
 
-    def testMe(self):
-        self.logger.error('retrying')
-        failure = self.failure
-        # page = failure.request.meta["playwright_page"]
+    async def close(self, reason):
+        """ handle logic at the closing of the spider"""
 
-        link_to_follow = failure.request.url
+        self.logger.info("\n" + "self.error_urls")
+        self.logger.info("#" * 50)
+        for url in self.error_urls:
+            self.logger.info(str(url))
 
-        self.logger.error('retrying on %s', link_to_follow)
+        self.logger.info("\n" + "self.error_400_urls")
+        self.logger.info("#" * 50)
+        for url in self.error_400_urls:
+            self.logger.info(str(url))
 
-        yield scrapy.Request(link_to_follow,
-                             # headers={"User-Agent": "hertz-sitemap-builder"},
-                             callback=self.parseUrl,
-                             errback=self.parseError,
-                             cb_kwargs=dict(request_link=link_to_follow),
-                             )
+        self.logger.info("\n" + "self.error_DNS_urls")
+        self.logger.info("#" * 50)
+        for url in self.error_DNS_urls:
+            self.logger.info(str(url))
+
+        self.logger.info("\n" + "self.following_links")
+        self.logger.info("#" * 50)
+        for url in self.following_links:
+            self.logger.info(str(url))
+
+        self.logger.info("\n" + "self.error_500_urls")
+        self.logger.info("#" * 50)
+        for url in self.error_500_urls:
+            self.logger.info(str(url))
+
+        self.error_DNS_urls = []
+        self.error_400_urls = []
+        self.error_urls = []
+        self.following_links = []
+        self.links = []
+        self.logger.info("closing spider")

@@ -18,12 +18,12 @@ from twisted.python.failure import Failure
 from scrapy.shell import inspect_response
 
 try:
-    os.remove('../outputs/output17.xml')
-    os.remove('../outputs/log17.log')
+    os.remove('../outputs/output20.xml')
+    os.remove('../outputs/log20.log')
 except OSError:
     pass
 
-logging.basicConfig(filename='../outputs/log17.log', level=logging.INFO)
+logging.basicConfig(filename='../outputs/log20.log', level=logging.INFO)
 logging.getLogger('scrapy').setLevel(logging.ERROR)
 logging.getLogger('playwright').setLevel(logging.ERROR)
 
@@ -55,7 +55,7 @@ class HertzspiderSpider(scrapy.Spider):
     handle_httpstatus_list = [500]
 
     custom_settings = {
-        'FEEDS': {'../outputs/output17.xml': {"format": 'xml'}},
+        'FEEDS': {'../outputs/output20.xml': {"format": 'xml'}},
         "LOG_LEVEL": "ERROR",
         'PLAYWRIGHT_ABORT_REQUEST': should_abort_requests
     }
@@ -73,7 +73,7 @@ class HertzspiderSpider(scrapy.Spider):
         self.link_extractor = LinkExtractor(canonicalize=False, unique=True,
                                             allow_domains=[self.domain],
                                             deny=['/p/', '/location','/drivingforward','/rest/',
-                                                  '/A-thou-doe-prospeeceiud-accome-Hauen-heeleepell'],
+                                                  '/A-thou-doe-prospeeceiud-accome-Hauen-heeleepell','nojs=true'],
                                             deny_domains=['pub.emails.hertz.com', 'salesforceliveagent.com', 'google-analytics.com',
                                                           'analytics.google.com',
                                                           'c.clicktale.net'],
